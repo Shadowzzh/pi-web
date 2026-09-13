@@ -122,8 +122,29 @@ test("does not expose disk-backed actions for transient sessions", () => {
   assert.match(sessionItemSource, /\{hovered && !session\.transient && \(/);
 });
 
+test("pins sessions through the downstream row context-menu hook", () => {
+  // The sidebar must claim the upstream hook event, otherwise the browser's
+  // native menu would show instead of the pin action.
+  assert.match(source, /SESSION_ROW_CONTEXT_MENU_EVENT/);
+  assert.match(source, /window\.addEventListener\(SESSION_ROW_CONTEXT_MENU_EVENT, onRowContextMenu\)/);
+  assert.match(source, /event\.preventDefault\(\)/);
+  // Pins are per-browser state, persisted like the unread markers.
+  assert.match(source, /useState<Set<string>>\(\(\) => loadPinnedSessionIds\(\)\)/);
+  assert.match(source, /savePinnedSessionIds\(pinnedSessionIds\)/);
+  assert.match(source, /togglePinnedSession\(prev, family\.root\.id\)/);
+  // The pin set feeds the family sort, which is what actually reorders rows.
+  assert.match(source, /listSessionFamilies\(filteredSessions, pinnedSessionIds\)/);
+  // Pinned state stays visible without hovering.
+  assert.match(sessionItemSource, /\{isPinned && <PinnedSessionIndicator \/>\}/);
+});
+
+test("reconciles pins changed by another tab", () => {
+  assert.match(source, /window\.addEventListener\("storage", onStorage\)/);
+  assert.match(source, /window\.removeEventListener\("storage", onStorage\)/);
+});
+
 test("hides subagent rows and aggregates their state into the main session row", () => {
-  assert.match(source, /const sessionFamilies = listSessionFamilies\(filteredSessions\)/);
+  assert.match(source, /const sessionFamilies = listSessionFamilies\(filteredSessions(, pinnedSessionIds)?\)/);
   assert.match(source, /familySessions\.some\(\(session\) => session\.id === selectedSessionId\)/);
   assert.match(source, /familySessions\.some\(\(session\) => runningSessionIds\.has\(session\.id\)\)/);
   assert.doesNotMatch(source, /function SessionTreeItem/);

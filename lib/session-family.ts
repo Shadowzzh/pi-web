@@ -1,5 +1,7 @@
 import type { SessionInfo } from "./types";
 
+const EMPTY_PINNED: ReadonlySet<string> = new Set();
+
 export interface SessionFamily {
   root: SessionInfo;
   subagents: SessionInfo[];
@@ -42,8 +44,18 @@ function resolveFamilyRoots(sessions: readonly SessionInfo[]): Map<string, strin
   return roots;
 }
 
-/** Groups visible main/fork sessions with every persisted subagent descendant. */
-export function listSessionFamilies(sessions: readonly SessionInfo[]): SessionFamily[] {
+/**
+ * Groups visible main/fork sessions with every persisted subagent descendant.
+ *
+ * `pinnedSessionIds` holds pinned *root* session ids (the ids the sidebar renders
+ * rows for). Pinned families sort first; within each group the existing
+ * most-recent-activity order is preserved, so pinning is a stable two-state
+ * flag rather than a manual ordering. Passing nothing keeps the previous order.
+ */
+export function listSessionFamilies(
+  sessions: readonly SessionInfo[],
+  pinnedSessionIds: ReadonlySet<string> = EMPTY_PINNED,
+): SessionFamily[] {
   const rootsBySessionId = resolveFamilyRoots(sessions);
   const families = new Map<string, SessionFamily>();
 
@@ -65,7 +77,12 @@ export function listSessionFamilies(sessions: readonly SessionInfo[]): SessionFa
     if (session.modified > family.latestModified) family.latestModified = session.modified;
   }
 
-  return [...families.values()].sort((a, b) => b.latestModified.localeCompare(a.latestModified));
+  return [...families.values()].sort((a, b) => {
+    const aPinned = pinnedSessionIds.has(a.root.id);
+    const bPinned = pinnedSessionIds.has(b.root.id);
+    if (aPinned !== bPinned) return aPinned ? -1 : 1;
+    return b.latestModified.localeCompare(a.latestModified);
+  });
 }
 
 export function getSessionFamily(

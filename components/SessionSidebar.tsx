@@ -4,7 +4,12 @@ import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, typ
 import type { SessionInfo } from "@/lib/types";
 import { listSessionFamilies } from "@/lib/session-family";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
-import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
+import { dispatchSessionRowContextMenu, SESSION_ROW_CONTEXT_MENU_EVENT, type SessionRowContextMenuDetail } from "@/lib/session-row-context-menu";
+import {
+  loadPinnedSessionIds,
+  savePinnedSessionIds,
+  togglePinnedSession,
+} from "@/lib/pinned-sessions";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getProjectActivity, getRecentProjects, sessionsForProject } from "@/lib/project-groups";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
@@ -411,6 +416,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
+  // Pinned session ids are a per-browser view preference stored in localStorage.
+  // Rows only render after the first client fetch resolves, so seeding state
+  // from storage here cannot desync server and client markup.
+  const [pinnedSessionIds, setPinnedSessionIds] = useState<Set<string>>(() => loadPinnedSessionIds());
+  const [rowMenu, setRowMenu] = useState<{ sessionId: string; name: string; x: number; y: number } | null>(null);
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
   const currentSuppressedCompletionSessionIdsRef = useRef<Set<string>>(new Set());
   const previousSuppressedCompletionSessionIdsRef = useRef<Set<string>>(new Set());
@@ -510,6 +520,30 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   useEffect(() => {
     saveUnreadSessionIds(unreadSessionIds);
   }, [unreadSessionIds]);
+
+  // Persist pins so they survive a browser refresh.
+  useEffect(() => {
+    savePinnedSessionIds(pinnedSessionIds);
+  }, [pinnedSessionIds]);
+
+  // Another tab or window may change pins; keep this one consistent with it.
+  useEffect(() => {
+    const onStorage = () => { setPinnedSessionIds(loadPinnedSessionIds()); };
+    window.addEventListener("storage", onStorage);
+    return () => { window.removeEventListener("storage", onStorage); };
+  }, []);
+
+  // Downstream context-menu hook: claim the session row menu so pinning and
+  // unpinning live next to the actions users already reach from here.
+  useEffect(() => {
+    const onRowContextMenu = (event: Event) => {
+      event.preventDefault();
+      const { id, name, clientX, clientY } = (event as CustomEvent<SessionRowContextMenuDetail>).detail;
+      setRowMenu({ sessionId: id, name: name || id.slice(0, 12), x: clientX, y: clientY });
+    };
+    window.addEventListener(SESSION_ROW_CONTEXT_MENU_EVENT, onRowContextMenu);
+    return () => { window.removeEventListener(SESSION_ROW_CONTEXT_MENU_EVENT, onRowContextMenu); };
+  }, []);
 
   useEffect(() => {
     let stopped = false;
@@ -1003,7 +1037,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         }
       : null);
 
-  const sessionFamilies = listSessionFamilies(filteredSessions);
+  const sessionFamilies = listSessionFamilies(filteredSessions, pinnedSessionIds);
 
   const virtualIndices = getSessionListIndices(
     sessionFamilies.length,
@@ -1014,6 +1048,19 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      {rowMenu && (
+        <SessionRowMenu
+          x={rowMenu.x}
+          y={rowMenu.y}
+          sessionName={rowMenu.name}
+          pinned={pinnedSessionIds.has(rowMenu.sessionId)}
+          onTogglePin={() => {
+            setPinnedSessionIds((prev) => togglePinnedSession(prev, rowMenu.sessionId));
+            setRowMenu(null);
+          }}
+          onClose={() => { setRowMenu(null); }}
+        />
+      )}
       {customPathOpen && (
         <DirectoryPicker
           initialPath={customPathValue}
@@ -1720,6 +1767,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                     isSelected={familySessions.some((session) => session.id === selectedSessionId)}
                     isRunning={familySessions.some((session) => runningSessionIds.has(session.id))}
                     isUnread={familySessions.some((session) => unreadSessionIds.has(session.id))}
+                    isPinned={pinnedSessionIds.has(family.root.id)}
+                    onTogglePin={() => {
+                      setPinnedSessionIds((prev) => togglePinnedSession(prev, family.root.id));
+                    }}
                     onClick={() => handleSelectSessionFromList(family.root)}
                     onRenamed={loadSessions}
                     onDeleted={(id) => {
@@ -1991,11 +2042,172 @@ function showProjectActivity(
   );
 }
 
+/** Shown on pinned rows so the state is visible without hovering. */
+function PinnedSessionIndicator() {
+  const { t } = useI18n();
+  return (
+    <span
+      title={t("sidebar.pinned")}
+      aria-label={t("sidebar.pinned")}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        color: "var(--accent)",
+      }}
+    >
+      <svg
+        width="11"
+        height="11"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        style={{ display: "block" }}
+      >
+        <line x1="12" y1="17" x2="12" y2="22" />
+        <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+      </svg>
+    </span>
+  );
+}
+
+/**
+ * Session row context menu, driven by the upstream
+ * `pi-web:session-row-contextmenu` hook so pinning does not require patching
+ * SessionItem's own menu handling.
+ */
+function SessionRowMenu({
+  x,
+  y,
+  sessionName,
+  pinned,
+  onTogglePin,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  sessionName: string;
+  pinned: boolean;
+  onTogglePin: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState({ x, y });
+
+  // Keep the menu on screen; the cursor may be near the viewport edge.
+  useLayoutEffect(() => {
+    const element = menuRef.current;
+    if (!element) return;
+    const { width, height } = element.getBoundingClientRect();
+    setPosition({
+      x: Math.max(4, Math.min(x, window.innerWidth - width - 4)),
+      y: Math.max(4, Math.min(y, window.innerHeight - height - 4)),
+    });
+  }, [x, y]);
+
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) onClose();
+    };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("resize", onClose);
+    window.addEventListener("blur", onClose);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("resize", onClose);
+      window.removeEventListener("blur", onClose);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={menuRef}
+      role="menu"
+      data-session-row-menu={sessionName}
+      style={{
+        position: "fixed",
+        left: position.x,
+        top: position.y,
+        zIndex: 1000,
+        minWidth: 190,
+        maxWidth: 280,
+        padding: 4,
+        background: "var(--bg)",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        boxShadow: "0 8px 24px rgba(0,0,0,0.22)",
+      }}
+    >
+      <div
+        style={{
+          padding: "5px 9px 6px",
+          fontSize: 11,
+          color: "var(--text-dim)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {sessionName}
+      </div>
+      <div style={{ height: 1, background: "var(--border)", margin: "0 4px 4px" }} />
+      <button
+        role="menuitem"
+        onClick={onTogglePin}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          width: "100%",
+          padding: "7px 9px",
+          background: "none",
+          border: "none",
+          borderRadius: 6,
+          color: "var(--text)",
+          fontSize: 12,
+          textAlign: "left",
+          cursor: "pointer",
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+      >
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill={pinned ? "currentColor" : "none"}
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          style={{ flexShrink: 0, color: pinned ? "var(--accent)" : "var(--text-muted)" }}
+        >
+          <line x1="12" y1="17" x2="12" y2="22" />
+          <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+        </svg>
+        {t(pinned ? "sidebar.unpin" : "sidebar.pin")}
+      </button>
+    </div>
+  );
+}
+
 function SessionItem({
   session,
   isSelected,
   isRunning,
   isUnread,
+  isPinned = false,
+  onTogglePin,
   onClick,
   onRenamed,
   onDeleted,
@@ -2008,6 +2220,8 @@ function SessionItem({
   isSelected: boolean;
   isRunning?: boolean;
   isUnread?: boolean;
+  isPinned?: boolean;
+  onTogglePin?: () => void;
   onClick: () => void;
   onRenamed?: () => void;
   onDeleted?: (id: string) => void;
@@ -2117,6 +2331,8 @@ function SessionItem({
     <div
       onClick={confirmDelete || renaming ? undefined : onClick}
       onContextMenu={confirmDelete || renaming ? undefined : handleContextMenu}
+      data-session-row={session.id}
+      data-session-pinned={isPinned ? "true" : undefined}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
       style={{
@@ -2227,6 +2443,7 @@ function SessionItem({
               }}
               title={title}
             >
+              {isPinned && <PinnedSessionIndicator />}
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
                 {title}
               </span>
@@ -2280,6 +2497,45 @@ function SessionItem({
           {/* Action buttons — shown on hover */}
           {hovered && !session.transient && (
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+              <button
+                onClick={(e) => { e.stopPropagation(); onTogglePin?.(); }}
+                title={t(isPinned ? "sidebar.unpin" : "sidebar.pin")}
+                aria-pressed={isPinned}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  width: 32, height: 32, padding: 0,
+                  background: isPinned ? "var(--bg-selected)" : "var(--bg-hover)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 7,
+                  color: isPinned ? "var(--accent)" : "var(--text-muted)",
+                  cursor: "pointer", flexShrink: 0,
+                  transition: "background 0.12s, color 0.12s, border-color 0.12s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--bg-selected)";
+                  e.currentTarget.style.color = "var(--accent)";
+                  e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = isPinned ? "var(--bg-selected)" : "var(--bg-hover)";
+                  e.currentTarget.style.color = isPinned ? "var(--accent)" : "var(--text-muted)";
+                  e.currentTarget.style.borderColor = "var(--border)";
+                }}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill={isPinned ? "currentColor" : "none"}
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="12" y1="17" x2="12" y2="22" />
+                  <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+                </svg>
+              </button>
               <button
                 onClick={startRename}
                 title={t("sidebar.rename")}

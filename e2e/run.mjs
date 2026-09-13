@@ -12,6 +12,7 @@ import { chromium } from "playwright";
 import { checkExtensionDialogs, extensionSource } from "./extension-dialog.mjs";
 import { checkChatAppearance } from "./chat-appearance.mjs";
 import { checkImageAttachments, imageExtensionSource } from "./image-attachments.mjs";
+import { checkSessionPinning } from "./session-pin.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const mode = process.env.E2E_SERVER_MODE || "dev";
@@ -364,6 +365,9 @@ try {
     }
     await checkExtensionDialogs(page, artifacts, viewport.width);
     await checkImageAttachments(page, project, artifacts, viewport.width);
+    if (viewport.width > 600) {
+      await checkSessionPinning(page, artifacts, viewport.width);
+    }
     if (viewport.width > 600) {
       await page.goto(`${base}/?session=${RICH}`, { waitUntil: "domcontentloaded" });
       await page.locator(".markdown-code-block pre").waitFor();
