@@ -711,7 +711,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   useEffect(() => () => { onContextUsageChange?.(null); }, [onContextUsageChange]);
 
   const onDrop = useCallback((files: File[]) => {
-    chatInputRef?.current?.addImages(files);
+    const images = files.filter((file) => file.type.startsWith("image/"));
+    const attachments = files.filter((file) => !file.type.startsWith("image/"));
+    if (images.length) chatInputRef?.current?.addImages(images);
+    if (attachments.length) chatInputRef?.current?.addFiles(attachments);
   }, [chatInputRef]);
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);

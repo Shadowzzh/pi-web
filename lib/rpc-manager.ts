@@ -6,6 +6,8 @@ import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { validateAgentImages } from "./image-attachments";
 import { appendImagePaths, getImageAttachmentStore, type MaterializedImages } from "./image-materialization";
+import { validateAgentFiles, type Base64FileAttachment } from "./file-attachments";
+import { appendFilePaths, getFileAttachmentStore, type MaterializedFiles } from "./file-materialization";
 import { invalidateModelsCache } from "./models-cache";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import {
@@ -563,7 +565,8 @@ export class AgentSessionWrapper {
     const tracksMutation = !allowedDuringReplacement;
     if (tracksMutation) this.activeMutatingCommands += 1;
     let imageBatch: MaterializedImages | undefined;
-    let imagesAccepted = false;
+    let fileBatch: MaterializedFiles | undefined;
+    let attachmentsAccepted = false;
     let message = command.message as string;
 
     try {
@@ -577,16 +580,32 @@ export class AgentSessionWrapper {
       if (type === "prompt" || type === "steer" || type === "follow_up") {
         const imageError = validateAgentImages(command.images);
         if (imageError) throw new Error(imageError);
+        const fileError = validateAgentFiles(command.files);
+        if (fileError) throw new Error(fileError);
         globalThis.__piImageAttachmentStore?.touch();
+        globalThis.__piFileAttachmentStore?.touch();
         const images = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
-        if (images?.length) {
+        const files = command.files as Base64FileAttachment[] | undefined;
+        if (images?.length || files?.length) {
           if (typeof message !== "string") throw new Error("message must be a string");
-          const store = getImageAttachmentStore(() => [...(globalThis.__piSessions?.values() ?? [])].some(session =>
+          const anySessionBusy = () => [...(globalThis.__piSessions?.values() ?? [])].some(session =>
             session.isRunning() || session.activeMutatingCommands > 0
             || Boolean(session.inner.getSteeringMessages?.().length || session.inner.getFollowUpMessages?.().length),
-          ));
-          imageBatch = await store.materialize(images);
-          message = appendImagePaths(message, imageBatch.paths);
+          );
+          if (images?.length) {
+            const store = getImageAttachmentStore(anySessionBusy);
+            imageBatch = await store.materialize(images);
+            message = appendImagePaths(message, imageBatch.paths);
+          }
+          if (files?.length) {
+            const store = getFileAttachmentStore(anySessionBusy);
+            const batch = await store.materialize(files);
+            fileBatch = batch;
+            message = appendFilePaths(message, batch.paths.map((path, index) => ({
+              path,
+              name: batch.names[index] ?? "",
+            })));
+          }
         }
       }
 
@@ -612,7 +631,7 @@ export class AgentSessionWrapper {
           let rejectPreflight!: (error: unknown) => void;
           const preflight = new Promise<void>((resolve, reject) => {
             acceptPreflight = () => {
-              imagesAccepted = true;
+              attachmentsAccepted = true;
               preflightAccepted = true;
               this.agentRunNeedsCompletion = true;
               if (preflightSettled) return;
@@ -905,14 +924,14 @@ export class AgentSessionWrapper {
       case "steer": {
         const steerImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         await this.inner.steer(message, steerImages?.length ? steerImages : undefined);
-        imagesAccepted = true;
+        attachmentsAccepted = true;
         return null;
       }
 
       case "follow_up": {
         const followImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         await this.inner.followUp(message, followImages?.length ? followImages : undefined);
-        imagesAccepted = true;
+        attachmentsAccepted = true;
         return null;
       }
 
@@ -1033,10 +1052,13 @@ export class AgentSessionWrapper {
           throw new Error(`Unsupported command: ${type}`);
       }
     } catch (error) {
-      if (imageBatch && !imagesAccepted) {
-        await imageBatch.rollback().catch(cleanupError => {
-          console.error("[pi-web] rejected image attachment cleanup failed:", cleanupError);
-        });
+      if (!attachmentsAccepted) {
+        for (const batch of [imageBatch, fileBatch]) {
+          if (!batch) continue;
+          await batch.rollback().catch(cleanupError => {
+            console.error("[pi-web] rejected attachment cleanup failed:", cleanupError);
+          });
+        }
       }
       throw error;
     } finally {

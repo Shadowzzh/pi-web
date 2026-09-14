@@ -468,6 +468,7 @@ test("locks built-in command submission until it settles", async () => {
   }).outputText).runInNewContext({
     attachedImages: [],
     attachedImagesRef: { current: [] },
+    attachedFiles: [],
     builtinCommandPendingRef: { current: false },
     canClearBuiltinCommandInput,
     clearInput() {},
