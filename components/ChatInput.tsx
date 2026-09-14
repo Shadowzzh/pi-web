@@ -105,6 +105,19 @@ export interface ChatInputHandle {
   restoreSubmission: (text: string, images?: ChatDraftImage[], files?: AttachedFile[], targetDraftKey?: string) => void;
 }
 
+/**
+ * iOS Safari decides the whole file-picker UI from `accept`: leaving it unset (or
+ * `*\/*`) shows the photo/camera action sheet, while narrowing it to document
+ * types opens the Files app directly. The cost is that non-matching extensions
+ * are greyed out on iOS, and desktop drag/drop bypasses `accept` entirely.
+ */
+export const DOCUMENT_ATTACHMENT_ACCEPT = [
+  ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp", ".rtf",
+  ".txt", ".md", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf",
+  ".cfg", ".env", ".log", ".sql", ".sh", ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".htm",
+  ".css", ".diff", ".patch", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar", ".epub",
+].join(",");
+
 const TOOL_PRESETS = ["chat-only", "read-only", "default", "full"] as const;
 type ToolPresetLabel = typeof TOOL_PRESETS[number];
 const TOOL_PRESET_MAP: Record<ToolPresetLabel, ToolPreset> = {
@@ -1682,7 +1695,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         transition: "opacity 0.15s",
       }}
     >
-      {/* Hidden file inputs: image picker and arbitrary attachment picker */}
+      {/* Hidden file inputs: image picker and document picker */}
       {!compact && <input
         ref={fileInputRef}
         type="file"
@@ -1698,6 +1711,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       {!compact && <input
         ref={fileAttachmentInputRef}
         type="file"
+        accept={DOCUMENT_ATTACHMENT_ACCEPT}
         multiple
         style={{ display: "none" }}
         onChange={(e) => {

@@ -488,6 +488,12 @@ test("locks built-in command submission until it settles", async () => {
   assert.match(sourceText, /<fieldset\s+disabled=\{builtinCommandPending\}\s+aria-busy=\{builtinCommandPending\}/);
 });
 
+test("narrows the document picker so iOS opens the Files app", () => {
+  const sourceText = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  assert.match(sourceText, /accept=\{DOCUMENT_ATTACHMENT_ACCEPT\}/);
+  assert.match(sourceText, /DOCUMENT_ATTACHMENT_ACCEPT = \[\s*"\.pdf"/);
+});
+
 test("keeps only read-only built-ins available while a run is active", () => {
   assert.equal(canRunBuiltinSlashCommandWhileStreaming("/copy"), true);
   assert.equal(canRunBuiltinSlashCommandWhileStreaming("/session"), true);
