@@ -20,6 +20,8 @@ import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trus
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { notifySessionComplete } from "./web-push";
 import { hasActiveSessionLivenessProvider } from "./session-liveness";
+import type { ActiveToolSnapshot } from "./agent-phase";
+import { getToolExecutionProgress } from "./tool-execution-progress";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
 import type {
@@ -517,6 +519,23 @@ export class AgentSessionWrapper {
     };
   }
 
+  /**
+   * Tools currently executing. The SSE replay already hands these to newly
+   * attached clients; `get_state` needs the same view so a client that reloads
+   * mid-tool labels the running command instead of "waiting for the model".
+   */
+  private activeToolSnapshots(): ActiveToolSnapshot[] {
+    const snapshots: ActiveToolSnapshot[] = [];
+    for (const event of this.activeToolEvents.values()) {
+      const id = typeof event.toolCallId === "string" ? event.toolCallId : null;
+      if (id === null) continue;
+      const name = typeof event.toolName === "string" ? event.toolName : "tool";
+      const progress = getToolExecutionProgress(event.partialResult) ?? undefined;
+      snapshots.push(progress === undefined ? { id, name } : { id, name, progress });
+    }
+    return snapshots;
+  }
+
   onDestroy(cb: () => void): void {
     this.onDestroyCallback = cb;
   }
@@ -726,6 +745,7 @@ export class AgentSessionWrapper {
           isStreaming: this.inner.isStreaming,
           isPromptRunning: this.pendingPromptCount > 0,
           isBashRunning: this.inner.isBashRunning,
+          activeTools: this.activeToolSnapshots(),
           isCompacting: this.inner.isCompacting,
           autoCompactionEnabled: this.inner.autoCompactionEnabled,
           autoRetryEnabled: this.inner.autoRetryEnabled,
