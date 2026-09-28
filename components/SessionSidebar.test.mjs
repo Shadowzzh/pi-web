@@ -164,7 +164,7 @@ test("reconciles pins changed by another tab", () => {
 });
 
 test("hides subagent rows and aggregates their state into the main session row", () => {
-  assert.match(source, /const sessionFamilies = listSessionFamilies\(filteredSessions(, pinnedSessionIds)?\)/);
+  assert.match(source, /const sessionFamilies = useMemo\(\s*\n\s*\(\) => listSessionFamilies\(filteredSessions, pinnedSessionIds\)/);
   assert.match(source, /familySessions\.some\(\(session\) => session\.id === selectedSessionId\)/);
   assert.match(source, /familySessions\.some\(\(session\) => runningSessionIds\.has\(session\.id\)\)/);
   assert.doesNotMatch(source, /function SessionTreeItem/);
