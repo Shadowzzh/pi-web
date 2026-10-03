@@ -561,11 +561,12 @@ function chatInputCallback(name, context) {
 }
 
 test("while a run streams, a bare /mcp opens Settings or is queued as before", async () => {
-  const run = async (value, handled, { mode = "steer", images = [] } = {}) => {
+  const run = async (value, handled, { mode = "steer", images = [], files = [] } = {}) => {
     const calls = { builtin: [], prompts: [], cleared: 0 };
     const sendQueued = chatInputCallback("sendQueued", {
       value,
       attachedImages: images,
+      attachedFiles: files,
       onAudioUnlock() {},
       clearInput() { calls.cleared += 1; },
       onBuiltinCommand: async () => ({ handled }),
@@ -589,6 +590,8 @@ test("while a run streams, a bare /mcp opens Settings or is queued as before", a
   // Subcommands and a /mcp with images never reach the handler.
   assert.deepEqual(await run("/mcp login docs", true), { builtin: [], prompts: [["/mcp login docs", "steer", 0]], cleared: 1 });
   assert.deepEqual(await run("/mcp", true, { images: [{}] }), { builtin: [], prompts: [["/mcp", "steer", 1]], cleared: 1 });
+  // A /mcp with files attached is a real submission too, never a bare command.
+  assert.deepEqual(await run("/mcp", true, { files: [{}] }), { builtin: [], prompts: [["/mcp", "steer", 0]], cleared: 1 });
   // The composer's own built-ins are unchanged.
   assert.deepEqual(await run("/copy", true), { builtin: ["/copy"], prompts: [], cleared: 0 });
 });
@@ -599,6 +602,7 @@ test("handleSend lets a handled /mcp through while streaming and sends an unowne
     const handleSend = chatInputCallback("handleSend", {
       value,
       attachedImages: [],
+      attachedFiles: [],
       onAudioUnlock() {},
       isStreaming,
       offersBuiltinSlashCommandWhileStreaming,
