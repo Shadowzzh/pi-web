@@ -14,6 +14,7 @@ import { checkExtensionDialogs, extensionSource } from "./extension-dialog.mjs";
 import { checkChatAppearance } from "./chat-appearance.mjs";
 import { checkImageAttachments, imageExtensionSource } from "./image-attachments.mjs";
 import { checkSessionPinning } from "./session-pin.mjs";
+import { checkSidebarShortcut } from "./sidebar-shortcut.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const mode = process.env.E2E_SERVER_MODE || "dev";
@@ -410,6 +411,7 @@ try {
     await page.goto(`${base}/?session=${RICH}`, { waitUntil: "domcontentloaded" });
     await page.locator(".markdown-code-block pre").waitFor();
     await checkFilePanel(page, previewFile);
+    await checkSidebarShortcut(page);
     await checkExtensionDialogs(page, artifacts, viewport.width);
     await checkImageAttachments(page, project, artifacts, viewport.width);
     if (viewport.width > 600) {

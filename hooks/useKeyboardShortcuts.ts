@@ -37,6 +37,29 @@ export function handleGlobalEscape(event: KeyboardEvent): boolean {
   return true;
 }
 
+/**
+ * The global Ctrl/Cmd+B shortcut: shows or hides the sidebar. Shift and Alt are
+ * left alone, since they belong to the browser's own Ctrl+Shift+B and to keys an
+ * input method or the page itself may want. A held key repeats its keydown, and
+ * a toggle has no meaning in between, so repeats are ignored. Marked handled
+ * already (`defaultPrevented`), the key was something nearer's. Returns whether
+ * it toggled the sidebar.
+ */
+export function handleGlobalSidebarToggle(
+  event: KeyboardEvent,
+  onToggle: (() => void) | undefined,
+): boolean {
+  if (event.key.toLowerCase() !== "b") return false;
+  // Either modifier, but not both: Ctrl on Windows/Linux, Cmd on macOS.
+  if (!event.metaKey && !event.ctrlKey) return false;
+  if (event.altKey || event.shiftKey) return false;
+  if (event.defaultPrevented || event.repeat || !onToggle) return false;
+
+  event.preventDefault();
+  onToggle();
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Hook: global keyboard shortcuts
 // ---------------------------------------------------------------------------
@@ -44,6 +67,8 @@ export function handleGlobalEscape(event: KeyboardEvent): boolean {
 interface UseGlobalKeyboardShortcutsOptions {
   /** Called when Ctrl+Alt+N is pressed. Receives current cwd. */
   onNewSession?: (cwd: string) => void;
+  /** Called when Ctrl/Cmd+B is pressed: show or hide the sidebar. */
+  onToggleSidebar?: () => void;
   /** The currently selected project directory (sidebar cwd). */
   activeCwd?: string | null;
 }
@@ -53,6 +78,7 @@ interface UseGlobalKeyboardShortcutsOptions {
  *
  * Shortcuts handled here:
  *   Esc          – stop the running agent (via module-level abort handler)
+ *   Ctrl/Cmd+B   – show or hide the sidebar
  *   Ctrl+Alt+N   – create a new session in the active project directory
  *
  * Note: Esc inside <textarea> or <input> is deliberately NOT handled here.
@@ -64,7 +90,7 @@ interface UseGlobalKeyboardShortcutsOptions {
 export function useGlobalKeyboardShortcuts(
   options: UseGlobalKeyboardShortcutsOptions,
 ): void {
-  const { onNewSession, activeCwd } = options;
+  const { onNewSession, onToggleSidebar, activeCwd } = options;
 
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
@@ -73,6 +99,9 @@ export function useGlobalKeyboardShortcuts(
         handleGlobalEscape(e);
         return;
       }
+
+      // ---- Ctrl/Cmd+B: show or hide the sidebar ----
+      if (handleGlobalSidebarToggle(e, onToggleSidebar)) return;
 
       // ---- Ctrl+Alt+N: new session ----
       if (e.key === "n" && e.ctrlKey && e.altKey) {
@@ -84,5 +113,5 @@ export function useGlobalKeyboardShortcuts(
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeCwd, onNewSession]);
+  }, [activeCwd, onNewSession, onToggleSidebar]);
 }

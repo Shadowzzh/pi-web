@@ -820,6 +820,7 @@ export function AppShell() {
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
     onNewSession: (cwd: string) => handleNewSession(`kb-${Date.now()}`, cwd),
+    onToggleSidebar: handleSidebarToggle,
     activeCwd,
   });
 
@@ -1970,8 +1971,9 @@ export function AppShell() {
         <div style={{ display: "flex", alignItems: "center", position: "relative", borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}>
           <button
             onClick={handleSidebarToggle}
-             title={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
-             aria-label={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
+            title={`${sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")} (Ctrl/Cmd+B)`}
+            aria-label={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
+            aria-keyshortcuts="Control+B Meta+B"
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,

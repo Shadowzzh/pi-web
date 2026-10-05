@@ -177,7 +177,8 @@ hooks/
   useAudio.ts              completion sound + AudioContext unlock
   useDragDrop.ts           shared drag/drop state
   useIsMobile.ts           responsive breakpoint
-  useKeyboardShortcuts.ts  Esc stops the running agent unless a field or nearer handler took it; Ctrl+Alt+N
+  useKeyboardShortcuts.ts  Esc stops the running agent unless a field or nearer handler took it; Ctrl/Cmd+B
+                           toggles the sidebar; Ctrl+Alt+N
   useTheme.ts              theme state
 ```
 
