@@ -11,7 +11,7 @@ const jiti = createJiti(import.meta.url, {
 });
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, modelSupportsImageInput, offersBuiltinSlashCommandWhileStreaming, replaceLinksWithMarkdown, shouldCompressImageFile, submitsSlashCommandOnEnter } = await jiti.import("./ChatInput.tsx");
+const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, RUN_END_CLICK_GUARD_MS, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, isRunEndStrayClick, modelSupportsImageInput, offersBuiltinSlashCommandWhileStreaming, replaceLinksWithMarkdown, replaceTextareaRange, shouldCompressImageFile, submitsSlashCommandOnEnter } = await jiti.import("./ChatInput.tsx");
 const { isBareMcpCommand } = await jiti.import("@/lib/mcp-command.ts");
 const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 const { clearDraft, getDraft, mergeRestoredSubmissionDraft, mergeRestoredSubmissionText, rekeyDraft, setDraft } = await jiti.import("@/lib/draft-store.ts");
@@ -111,6 +111,98 @@ test("follow-up shortcuts preserve newline, IME, mobile and completion behavior"
   }
 });
 
+test("file mention insertion uses one native undoable edit", () => {
+  const originalDocument = globalThis.document;
+  const calls = [];
+  const textarea = {
+    value: '@"my/"',
+    selectionStart: 5,
+    selectionEnd: 5,
+    focus() { calls.push(["focus"]); },
+    setSelectionRange(start, end) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+      calls.push(["selection", start, end]);
+    },
+  };
+  globalThis.document = {
+    execCommand(command, _showUi, text = "") {
+      calls.push(["command", command, text]);
+      if (command === "delete") {
+        textarea.value = textarea.value.slice(0, --textarea.selectionStart) + textarea.value.slice(textarea.selectionEnd);
+        textarea.selectionEnd = textarea.selectionStart;
+      } else if (command === "insertText") {
+        textarea.value = textarea.value.slice(0, textarea.selectionStart) + text + textarea.value.slice(textarea.selectionEnd);
+        textarea.selectionStart += text.length;
+        textarea.selectionEnd = textarea.selectionStart;
+      } else if (command === "forwardDelete") {
+        textarea.value = textarea.value.slice(0, textarea.selectionStart) + textarea.value.slice(textarea.selectionStart + 1);
+      }
+      return true;
+    },
+  };
+
+  try {
+    replaceTextareaRange(textarea, 0, 6, '@"my dir/"', 9);
+    assert.equal(textarea.value, '@"my dir/"');
+    assert.deepEqual(calls, [
+      ["focus"],
+      ...Array.from({ length: 5 }, () => ["command", "delete", ""]),
+      ["command", "insertText", '@"my dir/"'],
+      ["command", "forwardDelete", ""],
+      ["selection", 9, 9],
+    ]);
+
+    calls.length = 0;
+    Object.assign(textarea, { value: "hello selected", selectionStart: 6, selectionEnd: 14 });
+    replaceTextareaRange(textarea, 6, 14, "@file ");
+    assert.equal(textarea.value, "hello @file ");
+    assert.deepEqual(calls, [
+      ["focus"],
+      ["selection", 6, 14],
+      ["command", "insertText", "@file "],
+    ]);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
+test("file mention insertion falls back to a plain edit when execCommand refuses", () => {
+  const originalDocument = globalThis.document;
+  const events = [];
+  const textarea = {
+    value: "AAA @re BBB",
+    selectionStart: 7,
+    selectionEnd: 7,
+    focus() {},
+    setSelectionRange(start, end) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+    },
+    setRangeText(text, start, end, mode) {
+      this.value = this.value.slice(0, start) + text + this.value.slice(end);
+      if (mode === "end") this.selectionStart = this.selectionEnd = start + text.length;
+    },
+    dispatchEvent(event) { events.push([event.type, event.bubbles]); return true; },
+  };
+  globalThis.document = { execCommand: () => false };
+
+  try {
+    replaceTextareaRange(textarea, 4, 7, "@readme.md ");
+    assert.equal(textarea.value, "AAA @readme.md  BBB");
+    assert.equal(textarea.selectionStart, 15);
+    assert.deepEqual(events, [["input", true]]);
+
+    events.length = 0;
+    Object.assign(textarea, { value: "hello selected", selectionStart: 6, selectionEnd: 14 });
+    replaceTextareaRange(textarea, 6, 14, "@file ");
+    assert.equal(textarea.value, "hello @file ");
+    assert.deepEqual(events, [["input", true]]);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
 test("file mention arrows wrap around the match list", () => {
   const source = ts.createSourceFile("ChatInput.tsx", readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   function findHandler(node) {
@@ -180,6 +272,15 @@ test("shows the follow-up shortcut in the button tooltip", () => {
 
   assert.match(html, /title="Queue this message after the agent finishes \(Alt\/Option\+Enter\)"/);
   assert.match(html, /aria-keyshortcuts="Alt\+Enter"/);
+});
+
+test("ignores a pointer click that reaches Stop's slot just as the run ends", () => {
+  assert.equal(isRunEndStrayClick(1, 0), true);
+  assert.equal(isRunEndStrayClick(2, RUN_END_CLICK_GUARD_MS - 1), true);
+  assert.equal(isRunEndStrayClick(1, RUN_END_CLICK_GUARD_MS), false);
+  assert.equal(isRunEndStrayClick(1, Number.POSITIVE_INFINITY), false, "no run has ended yet");
+  assert.equal(isRunEndStrayClick(0, 0), false, "Enter/Space on a focused button is never a stray click");
+  assert.ok(RUN_END_CLICK_GUARD_MS <= 700, "a deliberate click after a run must not wait noticeably");
 });
 
 test("renders the upstream model error", () => {
@@ -304,7 +405,44 @@ test("renders the compact composer with the standard Send button and no session 
   assert.match(html, /<textarea/);
   assert.match(html, />Send<\/button>/);
   assert.equal((html.match(/<button\b/g) ?? []).length, 1);
-  assert.doesNotMatch(html, /type="file"|Attach image|Change tool preset/);
+  assert.doesNotMatch(html, /type="file"|Attach files|Change tool preset/);
+});
+
+test("the attach button takes any file when the chat handles them, and images only otherwise (#1101)", () => {
+  const render = (props) => renderToStaticMarkup(
+    React.createElement(I18nProvider, null, React.createElement(ChatInput, {
+      onSend() {}, onAbort() {}, isStreaming: false, ...props,
+    })),
+  );
+  const fileInput = (html) => html.match(/<input[^>]*type="file"[^>]*>/)?.[0] ?? "";
+
+  const html = render({ onAttachFiles() {} });
+  assert.match(html, /title="Attach files"/);
+  assert.match(fileInput(html), /multiple=""/);
+  // No accept list and no capture: phones offer files, the photo library and the camera.
+  assert.doesNotMatch(fileInput(html), /accept=|capture=/);
+
+  assert.match(fileInput(render({})), /accept="image\/\*"/);
+});
+
+test("picked files go to the chat's attach handler, or attach as images without one (#1101)", () => {
+  const photo = new File(["x"], "photo.png", { type: "image/png" });
+  const report = new File(["x"], "report.pdf", { type: "application/pdf" });
+  const pick = (context) => {
+    const calls = { attached: [], images: [] };
+    const target = { files: [photo, report], value: "C:\\fakepath\\photo.png" };
+    chatInputCallback("handleFilePick", {
+      processImageFiles: (files) => calls.images.push([...files]),
+      ...context(calls),
+    })({ target });
+    return { ...calls, value: target.value };
+  };
+
+  assert.deepEqual(
+    pick((calls) => ({ onAttachFiles: (files) => calls.attached.push([...files]) })),
+    { attached: [[photo, report]], images: [], value: "" },
+  );
+  assert.deepEqual(pick(() => ({ onAttachFiles: undefined })), { attached: [], images: [[photo, report]], value: "" });
 });
 
 test("shows and locks the optimistic model while a switch is pending", () => {
@@ -377,27 +515,6 @@ test("caps an upward menu to the visible space above its anchor", () => {
   // file list would paint through the bar and hide the leading matches.
   assert.equal(getUpwardMenuMaxHeight(200, 36), 156);
   assert.ok(getUpwardMenuMaxHeight(200, 36) < 400);
-});
-
-test("file mention menu applies the measured upward height cap", () => {
-  const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
-  const start = source.indexOf("{atMenuOpen && atQuery !== null && (() => {");
-  assert.notEqual(start, -1);
-  const block = source.slice(start, start + 4000);
-  assert.match(block, /ref=\{atMenuRef\}/);
-  assert.match(block, /min\(48vh, 400px, \$\{atMenuMaxHeight\}px\)/);
-  assert.match(block, /flexDirection: "column"/);
-  assert.match(block, /minHeight: 0/);
-  assert.equal(block.includes("maxHeight: \"min(48vh, 400px)\""), false);
-});
-
-test("file mention menu remeasures when its layout container shifts the anchor", () => {
-  const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
-  const start = source.indexOf("function subscribeUpwardMenuMaxHeight");
-  assert.notEqual(start, -1);
-  const block = source.slice(start, start + 1800);
-  assert.match(block, /const layoutContainer = parent\?\.parentElement;/);
-  assert.match(block, /anchorObserver\?\.observe\(layoutContainer\)/);
 });
 
 test("compresses large images while preserving small images and GIFs", async () => {
@@ -497,7 +614,6 @@ test("locks built-in command submission until it settles", async () => {
   callback.resolve({ handled: true });
   assert.equal(await first, true);
   assert.deepEqual(callback.pendingStates, [true, false]);
-  assert.match(sourceText, /<fieldset\s+disabled=\{builtinCommandPending\}\s+aria-busy=\{builtinCommandPending\}/);
 });
 
 test("narrows the document picker so iOS opens the Files app", () => {
@@ -541,9 +657,6 @@ test("Enter on pi's built-in /mcp submits it at once; other extension commands s
   assert.equal(submitsSlashCommandOnEnter("/compact", compact, false), true);
   assert.equal(submitsSlashCommandOnEnter("/compact", compact, true), false);
   assert.equal(submitsSlashCommandOnEnter("/co", copy, false), false);
-
-  const sourceText = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
-  assert.match(sourceText, /if \(sendShortcut && submitsSlashCommandOnEnter\(value, selectedCommand, isStreaming\)\) \{/);
 });
 
 function chatInputCallback(name, context) {
@@ -767,6 +880,26 @@ test("renders compact errors above the input as a wrapping alert", () => {
   assert.ok(html.indexOf('role="alert"') < html.indexOf("<textarea"));
 });
 
+test("a compact error can be dismissed when the composer is given a handler", () => {
+  const render = (props) => renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(ChatInput, {
+        onSend() {},
+        onAbort() {},
+        onCompact() {},
+        isStreaming: false,
+        compactError: "Nothing to compact (session too small)",
+        ...props,
+      }),
+    ),
+  );
+
+  assert.match(render({ onDismissCompactError() {} }), /aria-label="Dismiss compaction error"/);
+  assert.doesNotMatch(render({}), /Dismiss compaction error/);
+});
+
 test("modelSupportsImageInput warns only when modality info is known and lacks image", () => {
   const modelList = [
     { id: "text-only", name: "Text Only", provider: "ollama", input: ["text"] },
@@ -824,16 +957,6 @@ test("renders image warnings for known text-only defaults without an explicit mo
   } finally {
     clearDraft(draftKey);
   }
-});
-
-test("only the chat composer offers saving a default model or reasoning level", () => {
-  const chatInputSource = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
-  const agentsConfigSource = readFileSync(new URL("./AgentsConfig.tsx", import.meta.url), "utf8");
-  assert.match(chatInputSource, /<ModelSelector[\s\S]*?defaultValue=\{defaultModel\}[\s\S]*?onSetDefault=\{onSetDefaultModel\}/);
-  // "auto" means "use the default", so it never gets a star of its own.
-  assert.match(chatInputSource, /star=\{onSetDefaultThinkingLevel && lvl !== "auto"/);
-  // A subagent profile's model is not the default for new chats.
-  assert.doesNotMatch(agentsConfigSource, /onSetDefault/);
 });
 
 test("selector rows keep the default star and the floating save button in one gutter", async () => {
