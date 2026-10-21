@@ -8,7 +8,7 @@ import { ThinkingIcon } from "./ThinkingIcon";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
-import { getAssistantErrorMessage, getThinkingPreview, hasAssistantAnswer, isAssistantTruncated, isEmptyThinkingBlock } from "@/lib/message-display";
+import { getAssistantErrorMessage, getThinkingOnlyFallback, getThinkingPreview, hasAssistantAnswer, isAssistantTruncated, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell, type SplitDiffFile } from "@/lib/patch";
 import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatchPaths, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
 import { isApplyPatchToolName, isEditToolName, isWriteToolName } from "@/lib/tool-names";
@@ -738,7 +738,8 @@ function AssistantMessageView({
     return map;
   }, [toolResults, message.timestamp]);
 
-  const textContent = blocks
+  const thinkingOnlyFallback = getThinkingOnlyFallback(message, { isStreaming });
+  const textContent = thinkingOnlyFallback?.thinking ?? blocks
     .filter((b): b is TextContent => b.type === "text")
     .map((b) => b.text)
     .join("\n");
@@ -854,7 +855,19 @@ function AssistantMessageView({
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {blockItems.map(({ block, originalIndex }) => (
+        {thinkingOnlyFallback ? (
+          <div data-thinking-only-fallback>
+            <div
+              role="note"
+              style={{ marginBottom: 6, color: "var(--text-dim)", fontSize: 11, lineHeight: 1.4 }}
+            >
+              ⚠ {t("chat.thinkingOnlyFallback")}
+            </div>
+            <div data-message-text data-search-target={thinkingOnlyFallback === searchBlock || undefined}>
+              <SafeMarkdownBody cwd={cwd} onOpenFile={onOpenFile}>{thinkingOnlyFallback.thinking}</SafeMarkdownBody>
+            </div>
+          </div>
+        ) : blockItems.map(({ block, originalIndex }) => (
           <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} searchTarget={block === searchBlock} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
         ))}
       </div>

@@ -39,6 +39,26 @@ export function getDisplayableAssistantBlocks(
   return (message.content ?? []).filter((block) => !isEmptyThinkingBlock(block, options));
 }
 
+/**
+ * Some Anthropic-compatible gateways occasionally place a complete response in
+ * a lone thinking block and finish normally without emitting a text block.
+ * Preserve the raw session data, but recover that narrow malformed shape for
+ * display as the final reply. Streaming, deferred history and non-stop turns
+ * remain ordinary thinking so this never guesses while the model is still
+ * producing output or has failed.
+ */
+export function getThinkingOnlyFallback(
+  message: AssistantMessage,
+  options: DisplayOptions = {},
+): ThinkingContent | null {
+  if (options.isStreaming || message.stopReason !== "stop") return null;
+  const blocks = getDisplayableAssistantBlocks(message, options);
+  if (blocks.length !== 1) return null;
+  const [block] = blocks;
+  if (block.type !== "thinking" || block.deferred || block.thinking.trim() === "") return null;
+  return block;
+}
+
 export function getAssistantErrorMessage(
   message: AssistantMessage,
   options: DisplayOptions = {},
@@ -59,9 +79,9 @@ export function isAssistantTruncated(
   return !options.isStreaming && message.stopReason === "length";
 }
 
-/** Text, an image, or a tool call is an answer. Thinking alone is not. */
+/** Text, an image, or a tool call is an answer. A recovered malformed thinking-only reply is the sole exception. */
 export function hasAssistantAnswer(message: AssistantMessage): boolean {
-  return (message.content ?? []).some((block) => {
+  return getThinkingOnlyFallback(message) !== null || (message.content ?? []).some((block) => {
     if (block.type === "text") return block.text.trim().length > 0;
     return block.type === "image" || block.type === "toolCall";
   });
@@ -76,6 +96,8 @@ export function splitFinalAssistantBlocks(
   options: DisplayOptions = {},
 ): { answerBlocks: AssistantContentBlock[]; processBlocks: AssistantContentBlock[] } {
   const blocks = getDisplayableAssistantBlocks(message, options);
+  const recoveredThinking = getThinkingOnlyFallback(message, options);
+  if (recoveredThinking) return { answerBlocks: [recoveredThinking], processBlocks: [] };
   const lastProcessIndex = blocks.findLastIndex((block) => !isFinalAnswerBlock(block));
   if (lastProcessIndex === -1) {
     return { answerBlocks: blocks, processBlocks: [] };
@@ -97,7 +119,7 @@ export function countToolCallBlocks(blocks: AssistantContentBlock[]): number {
  * last tool call sits in them and would be hidden (#906).
  */
 export function collapsesProcessDetails(answer: AssistantMessage | null): boolean {
-  return (answer?.content ?? []).some((block) => (
+  return Boolean(answer && getThinkingOnlyFallback(answer)) || (answer?.content ?? []).some((block) => (
     block.type === "image" || (block.type === "text" && block.text.trim().length > 0)
   ));
 }

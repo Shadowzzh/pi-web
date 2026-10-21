@@ -84,6 +84,39 @@ test("shows deferred thinking previews without loading the full content", () => 
   assert.match(html, /aria-expanded="false"/);
 });
 
+test("renders a completed thinking-only reply as Markdown with a provider warning", () => {
+  const html = renderMessage({
+    role: "assistant",
+    provider: "gateway",
+    model: "deepseek-test",
+    stopReason: "stop",
+    content: [{
+      type: "thinking",
+      thinking: "## Recovered reply\n\n| Source | Status |\n| --- | --- |\n| Gateway | **Malformed** |",
+    }],
+  });
+
+  assert.match(html, /data-thinking-only-fallback/);
+  assert.match(html, /provider returned no answer block/i);
+  assert.match(html, /<h2>Recovered reply<\/h2>/);
+  assert.match(html, /<table>/);
+  assert.match(html, /data-message-text/);
+  assert.doesNotMatch(html, /aria-label="Thinking:/);
+  assert.match(html, />Copy</);
+});
+
+test("keeps non-stop thinking-only messages in the thinking view", () => {
+  const html = renderMessage({
+    role: "assistant",
+    stopReason: "error",
+    errorMessage: "Gateway failed",
+    content: [{ type: "thinking", thinking: "Incomplete reasoning" }],
+  });
+
+  assert.doesNotMatch(html, /data-thinking-only-fallback/);
+  assert.match(html, /aria-label="Thinking:/);
+});
+
 test("marks only the matched text block after splitting thinking and the final answer", () => {
   const message = {
     role: "assistant",

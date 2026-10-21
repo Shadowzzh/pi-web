@@ -462,6 +462,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.generatingToolInput": "正在產生參數...",
     "chat.truncatedByOutputLimit": "回覆因達到模型輸出長度上限而被截斷。傳送一則後續訊息以繼續。",
     "chat.truncatedWithoutAnswer": "輸出在產生正文前就達到了上限：額度被思考或接近佔滿的上下文耗盡。再傳訊息很可能再次截斷。請先壓縮上下文，或降低思考檔位。",
+    "chat.thinkingOnlyFallback": "上游未回傳獨立的正文區塊；以下內容已將思考區塊作為回覆轉譯。",
     "chat.runningNamedTool": "正在執行 {name}...",
     "chat.runningTools": "正在執行 {names}...",
     "chat.runningToolsMore": "正在執行 {names}（另有 {count} 個）...",
